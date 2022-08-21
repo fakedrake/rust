@@ -2280,6 +2280,11 @@ pub enum VarianceDiagInfo<'tcx> {
         /// (e.g. `0` for `*mut T`, `1` for `MyStruct<'CovariantParam, 'InvariantParam>`)
         param_index: u32,
     },
+    /// There was a generic but it was actually function-like.
+    Contravariant {
+        /// The type that changed its variance
+        ty: Ty<'tcx>,
+    },
 }
 
 impl<'tcx> VarianceDiagInfo<'tcx> {
@@ -2290,6 +2295,7 @@ impl<'tcx> VarianceDiagInfo<'tcx> {
         match self {
             VarianceDiagInfo::None => other,
             VarianceDiagInfo::Invariant { .. } => self,
+            VarianceDiagInfo::Contravariant { .. } => self,
         }
     }
 }

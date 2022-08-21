@@ -356,6 +356,8 @@ declare_features! (
     (active, const_trait_impl, "1.42.0", Some(67792), None),
     /// Allows the `?` operator in const contexts.
     (active, const_try, "1.56.0", Some(74935), None),
+    /// Allow contravariant Fn/FnMut/FnOnce
+    (active, contravariant_traits, "1.56.0", Some(100728), None),
     /// Allows non-builtin attributes in inner attribute position.
     (active, custom_inner_attributes, "1.30.0", Some(54726), None),
     /// Allows custom test frameworks with `#![test_runner]` and `#[test_case]`.

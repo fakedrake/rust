@@ -7,6 +7,7 @@
 use crate::ty::error::{ExpectedFound, TypeError};
 use crate::ty::subst::{GenericArg, GenericArgKind, Subst, SubstsRef};
 use crate::ty::{self, ImplSubject, Term, Ty, TyCtxt, TypeFoldable};
+use ast::LangItem;
 use rustc_hir as ast;
 use rustc_hir::def_id::DefId;
 use rustc_span::DUMMY_SP;
@@ -137,11 +138,25 @@ pub fn relate_type_and_mut<'tcx, R: TypeRelation<'tcx>>(
 #[inline]
 pub fn relate_substs<'tcx, R: TypeRelation<'tcx>>(
     relation: &mut R,
+    var: ty::Variance,
     a_subst: SubstsRef<'tcx>,
     b_subst: SubstsRef<'tcx>,
 ) -> RelateResult<'tcx, SubstsRef<'tcx>> {
-    relation.tcx().mk_substs(iter::zip(a_subst, b_subst).map(|(a, b)| {
-        relation.relate_with_variance(ty::Invariant, ty::VarianceDiagInfo::default(), a, b)
+    relation.tcx().mk_substs(iter::zip(a_subst, b_subst).enumerate().map(|(i, (a, b))| {
+        let diagnostics = if let GenericArgKind::Type(ty) = a.unpack() {
+            match var {
+                rustc_type_ir::Variance::Invariant => {
+                    ty::VarianceDiagInfo::Invariant { ty, param_index: i as u32 }
+                }
+                rustc_type_ir::Variance::Contravariant => {
+                    ty::VarianceDiagInfo::Contravariant { ty }
+                }
+                _ => ty::VarianceDiagInfo::default(),
+            }
+        } else {
+            ty::VarianceDiagInfo::default()
+        };
+        relation.relate_with_variance(var, diagnostics, a, b)
     }))
 }
 
@@ -313,6 +328,35 @@ impl<'tcx> Relate<'tcx> for ty::ExistentialProjection<'tcx> {
     }
 }
 
+#[allow(dead_code)]
+fn undone() -> ty::Variance {
+    todo!()
+}
+
+macro_rules! pr {
+    ($s:expr, $($fmt:tt),*) => (if $s.features().contravariant_traits {
+        eprintln!($($fmt),*);
+    })
+}
+
+#[inline]
+fn trait_variance<'tcx>(tcx: TyCtxt<'tcx>, did: DefId) -> ty::Variance {
+    if is_fn_trait(tcx, did) {
+        pr!(tcx, "Contravariant: {did:?}");
+        ty::Contravariant
+    } else {
+        ty::Invariant
+    }
+}
+
+/// True if `did` is [`Fn`]/[`FnMut`]/[`FnOnce`].
+#[inline]
+fn is_fn_trait<'tcx>(tcx: TyCtxt<'tcx>, did: DefId) -> bool {
+    did == tcx.require_lang_item(LangItem::Fn, None)
+        || did == tcx.require_lang_item(LangItem::FnMut, None)
+        || did == tcx.require_lang_item(LangItem::FnOnce, None)
+}
+
 impl<'tcx> Relate<'tcx> for ty::TraitRef<'tcx> {
     fn relate<R: TypeRelation<'tcx>>(
         relation: &mut R,
@@ -323,7 +367,15 @@ impl<'tcx> Relate<'tcx> for ty::TraitRef<'tcx> {
         if a.def_id != b.def_id {
             Err(TypeError::Traits(expected_found(relation, a.def_id, b.def_id)))
         } else {
-            let substs = relate_substs(relation, a.substs, b.substs)?;
+            // REMOVEME: This is related to the issue being resolved.
+            pr!(relation.tcx(), "Relating {a:?} {b:?}");
+            let substs = relate_substs(
+                relation,
+                trait_variance(relation.tcx(), a.def_id),
+                a.substs,
+                b.substs,
+            )?;
+            pr!(relation.tcx(), "=> substs = {substs:?}");
             Ok(ty::TraitRef { def_id: a.def_id, substs })
         }
     }
@@ -339,7 +391,14 @@ impl<'tcx> Relate<'tcx> for ty::ExistentialTraitRef<'tcx> {
         if a.def_id != b.def_id {
             Err(TypeError::Traits(expected_found(relation, a.def_id, b.def_id)))
         } else {
-            let substs = relate_substs(relation, a.substs, b.substs)?;
+            pr!(relation.tcx(), "Relating {a:?} {b:?}");
+            let substs = relate_substs(
+                relation,
+                trait_variance(relation.tcx(), a.def_id),
+                a.substs,
+                b.substs,
+            )?;
+            pr!(relation.tcx(), "=> substs = {substs:?}");
             Ok(ty::ExistentialTraitRef { def_id: a.def_id, substs })
         }
     }
@@ -559,7 +618,14 @@ pub fn super_relate_tys<'tcx, R: TypeRelation<'tcx>>(
         (&ty::Opaque(a_def_id, a_substs), &ty::Opaque(b_def_id, b_substs))
             if a_def_id == b_def_id =>
         {
-            let substs = relate_substs(relation, a_substs, b_substs)?;
+            pr!(relation.tcx(),"Relating {a:?} {b:?}");
+            let substs = relate_substs(
+                relation,
+                trait_variance(relation.tcx(), a_def_id),
+                a_substs,
+                b_substs,
+            )?;
+            pr!(relation.tcx(),"=> substs = {substs:?}");
             Ok(tcx.mk_opaque(a_def_id, substs))
         }
 
@@ -690,7 +756,7 @@ impl<'tcx> Relate<'tcx> for ty::ClosureSubsts<'tcx> {
         a: ty::ClosureSubsts<'tcx>,
         b: ty::ClosureSubsts<'tcx>,
     ) -> RelateResult<'tcx, ty::ClosureSubsts<'tcx>> {
-        let substs = relate_substs(relation, a.substs, b.substs)?;
+        let substs = relate_substs(relation, ty::Invariant, a.substs, b.substs)?;
         Ok(ty::ClosureSubsts { substs })
     }
 }
@@ -701,7 +767,7 @@ impl<'tcx> Relate<'tcx> for ty::GeneratorSubsts<'tcx> {
         a: ty::GeneratorSubsts<'tcx>,
         b: ty::GeneratorSubsts<'tcx>,
     ) -> RelateResult<'tcx, ty::GeneratorSubsts<'tcx>> {
-        let substs = relate_substs(relation, a.substs, b.substs)?;
+        let substs = relate_substs(relation, ty::Invariant, a.substs, b.substs)?;
         Ok(ty::GeneratorSubsts { substs })
     }
 }
@@ -712,7 +778,7 @@ impl<'tcx> Relate<'tcx> for SubstsRef<'tcx> {
         a: SubstsRef<'tcx>,
         b: SubstsRef<'tcx>,
     ) -> RelateResult<'tcx, SubstsRef<'tcx>> {
-        relate_substs(relation, a, b)
+        relate_substs(relation, ty::Invariant, a, b)
     }
 }
 

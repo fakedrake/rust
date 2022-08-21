@@ -567,7 +567,7 @@ impl<'tcx> TypeRelation<'tcx> for Generalizer<'_, 'tcx> {
             // Avoid fetching the variance if we are in an invariant
             // context; no need, and it can induce dependency cycles
             // (e.g., #41849).
-            relate::relate_substs(self, a_subst, b_subst)
+            relate::relate_substs(self, ty::Invariant, a_subst, b_subst)
         } else {
             let tcx = self.tcx();
             let opt_variances = tcx.variances_of(item_def_id);
@@ -588,6 +588,9 @@ impl<'tcx> TypeRelation<'tcx> for Generalizer<'_, 'tcx> {
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
+        if self.tcx().features().contravariant_traits {
+            eprintln!("Generalizer::relate_with_variance({variance:?}, {a:?}, {b:?})");
+        }
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
 

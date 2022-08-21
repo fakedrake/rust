@@ -53,16 +53,19 @@ impl<'tcx> TypeRelation<'tcx> for Equate<'_, '_, 'tcx> {
         // performing trait matching (which then performs equality
         // unification).
 
-        relate::relate_substs(self, a_subst, b_subst)
+        relate::relate_substs(self, ty::Invariant, a_subst, b_subst)
     }
 
     fn relate_with_variance<T: Relate<'tcx>>(
         &mut self,
-        _: ty::Variance,
+        var: ty::Variance,
         _info: ty::VarianceDiagInfo<'tcx>,
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
+        if self.tcx().features().contravariant_traits {
+            eprintln!("Equate::relate_with_variance({var:?}, {a:?}, {b:?})");
+        }
         self.relate(a, b)
     }
 

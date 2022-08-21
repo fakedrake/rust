@@ -262,11 +262,14 @@ impl<'tcx> TypeRelation<'tcx> for SimpleEqRelation<'tcx> {
 
     fn relate_with_variance<T: Relate<'tcx>>(
         &mut self,
-        _: ty::Variance,
+        var: ty::Variance,
         _info: ty::VarianceDiagInfo<'tcx>,
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
+        if self.tcx().features().contravariant_traits {
+            eprintln!("SimpleEqRelation::relate_with_variance({var:?}, {a:?}, {b:?})");
+        }
         // Here we ignore variance because we require drop impl's types
         // to be *exactly* the same as to the ones in the struct definition.
         self.relate(a, b)

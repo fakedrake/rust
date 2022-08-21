@@ -524,6 +524,10 @@ where
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
+        if self.tcx().features().contravariant_traits {
+            eprintln!("TypeRelating::relate_with_variance({variance:?}, {a:?}, {b:?})");
+        }
+
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
         self.ambient_variance_info = self.ambient_variance_info.xform(info);
@@ -907,6 +911,10 @@ where
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
+        if self.tcx().features().contravariant_traits {
+            eprintln!("TypeGeneralizer::relate_with_variance({variance:?}, {a:?}, {b:?})");
+        }
+
         debug!(
             "TypeGeneralizer::relate_with_variance(variance={:?}, a={:?}, b={:?})",
             variance, a, b

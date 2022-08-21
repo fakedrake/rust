@@ -408,24 +408,40 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, 'tcx> {
             }
         };
 
+        let mut report = |note,desc| {
+            diag.note(&format!("requirement occurs because of {desc}",));
+            diag.note(&note);
+            diag.help("see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance");
+        };
+
         match variance_info {
             ty::VarianceDiagInfo::None => {}
+            ty::VarianceDiagInfo::Contravariant { ty } => {
+                match ty.kind() {
+                    ty::Tuple(lst_ty) => {
+                        let desc = format!("arguments `{lst_ty}`");
+                        let note = format!("function arguments are covariant.");
+                        report(note, desc);
+                    }
+                    _ => panic!("Unexpected type {:?}", ty),
+                };
+            }
             ty::VarianceDiagInfo::Invariant { ty, param_index } => {
-                let (desc, note) = match ty.kind() {
+                match ty.kind() {
                     ty::RawPtr(ty_mut) => {
                         assert_eq!(ty_mut.mutbl, rustc_hir::Mutability::Mut);
-                        (
+                        report(
                             format!("a mutable pointer to `{}`", ty_mut.ty),
                             "mutable pointers are invariant over their type parameter".to_string(),
-                        )
+                        );
                     }
                     ty::Ref(_, inner_ty, mutbl) => {
                         assert_eq!(*mutbl, rustc_hir::Mutability::Mut);
-                        (
+                        report(
                             format!("a mutable reference to `{inner_ty}`"),
                             "mutable references are invariant over their type parameter"
                                 .to_string(),
-                        )
+                        );
                     }
                     ty::Adt(adt, substs) => {
                         let generic_arg = substs[param_index as usize];
@@ -441,7 +457,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, 'tcx> {
                         let note = format!(
                             "the {adt_desc} `{base_ty}` is invariant over the parameter `{base_generic_arg}`"
                         );
-                        (desc, note)
+                        report(desc, note);
                     }
                     ty::FnDef(def_id, _) => {
                         let name = self.infcx.tcx.item_name(*def_id);
@@ -452,17 +468,14 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, 'tcx> {
                             "the function `{name}` is invariant over the parameter `{}`",
                             identity_substs[param_index as usize]
                         );
-                        (desc, note)
+                        report(desc, note);
                     }
                     _ => panic!("Unexpected type {:?}", ty),
                 };
-                diag.note(&format!("requirement occurs because of {desc}",));
-                diag.note(&note);
-                diag.help("see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance");
             }
         }
+            self.buffer_error(diag);
 
-        self.buffer_error(diag);
     }
 
     /// Report a specialized error when `FnMut` closures return a reference to a captured variable.

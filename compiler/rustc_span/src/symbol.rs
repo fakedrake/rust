@@ -541,6 +541,7 @@ symbols! {
         constructor,
         contents,
         context,
+        contravariant_traits,
         convert,
         copy,
         copy_closures,
