@@ -16,6 +16,12 @@ use std::iter;
 
 pub type RelateResult<'tcx, T> = Result<T, TypeError<'tcx>>;
 
+macro_rules! pr {
+    ($s:expr, $($fmt:tt),*) => (if $s.features().contravariant_traits {
+        eprintln!($($fmt),*);
+    })
+}
+
 #[derive(Clone, Debug)]
 pub enum Cause {
     ExistentialRegionBound, // relating an existential region bound
@@ -61,7 +67,16 @@ pub trait TypeRelation<'tcx>: Sized {
 
         let tcx = self.tcx();
         let opt_variances = tcx.variances_of(item_def_id);
-        relate_substs_with_variances(self, item_def_id, opt_variances, a_subst, b_subst)
+        pr!(
+            self.tcx(),
+            "TypeRelation::relate_substs_with_variances({item_def_id:?}, {opt_variances:?}, {a_subst:?}, {b_subst:?}) ..."
+        );
+        let ret = relate_substs_with_variances(self, item_def_id, opt_variances, a_subst, b_subst);
+        pr!(
+            self.tcx(),
+            "TypeRelation::relate_substs_with_variances({item_def_id:?}, {opt_variances:?}, {a_subst:?}, {b_subst:?}) => {ret:?}"
+        );
+        ret
     }
 
     /// Switch variance for the purpose of relating `a` and `b`.
@@ -156,7 +171,10 @@ pub fn relate_substs<'tcx, R: TypeRelation<'tcx>>(
         } else {
             ty::VarianceDiagInfo::default()
         };
-        relation.relate_with_variance(var, diagnostics, a, b)
+        pr!(relation.tcx(), "[begin]SubstsRef::relate_subst({var:?}, {a:?}, {b:?})");
+        let ret = relation.relate_with_variance(var, diagnostics, a, b);
+        pr!(relation.tcx(), "[end]SubstsRef::relate_subst({var:?}, {a:?}, {b:?}) => {ret:?}");
+        ret
     }))
 }
 
@@ -292,7 +310,9 @@ impl<'tcx> Relate<'tcx> for ty::ProjectionTy<'tcx> {
                 b.item_def_id,
             )))
         } else {
+            pr!(relation.tcx(), "[begin] ProjectionTy::relate({a:?}, {b:?})");
             let substs = relation.relate(a.substs, b.substs)?;
+            pr!(relation.tcx(), "[begin] ProjectionTy::relate({a:?}, {b:?}) => {substs:?}");
             Ok(ty::ProjectionTy { item_def_id: a.item_def_id, substs: &substs })
         }
     }
@@ -311,19 +331,33 @@ impl<'tcx> Relate<'tcx> for ty::ExistentialProjection<'tcx> {
                 b.item_def_id,
             )))
         } else {
+            pr!(relation.tcx(), "[begin] ExistentialProjection::relate({a:?}, {b:?})");
+            pr!(relation.tcx(), "[begin] ExistentialProjection::relate_terms(...)");
+            // XXX: In case of closure traits this should be covariant.
             let term = relation.relate_with_variance(
                 ty::Invariant,
                 ty::VarianceDiagInfo::default(),
                 a.term,
                 b.term,
             )?;
-            let substs = relation.relate_with_variance(
-                ty::Invariant,
-                ty::VarianceDiagInfo::default(),
+            pr!(relation.tcx(), "[end] ExistentialProjection::relate_terms(...)");
+
+            let tcx = relation.tcx();
+            let trait_id = tcx.associated_item(a.item_def_id).container_id(tcx);
+            pr!(relation.tcx(), "[begin] ExistentialProjection::relate_substs(...) [Trait={trait_id:?}]");
+            let substs = relate_substs(
+                relation,
+                trait_variance(tcx, trait_id),
                 a.substs,
                 b.substs,
             )?;
-            Ok(ty::ExistentialProjection { item_def_id: a.item_def_id, substs, term })
+            pr!(relation.tcx(), "[end] ExistentialProjection::relate_substs(...)");
+            pr!(relation.tcx(), "[end] ExistentialProjection::relate({a:?}, {b:?}) => _");
+            Ok(ty::ExistentialProjection {
+                item_def_id: a.item_def_id,
+                substs,
+                term,
+            })
         }
     }
 }
@@ -331,12 +365,6 @@ impl<'tcx> Relate<'tcx> for ty::ExistentialProjection<'tcx> {
 #[allow(dead_code)]
 fn undone() -> ty::Variance {
     todo!()
-}
-
-macro_rules! pr {
-    ($s:expr, $($fmt:tt),*) => (if $s.features().contravariant_traits {
-        eprintln!($($fmt),*);
-    })
 }
 
 #[inline]
@@ -368,14 +396,14 @@ impl<'tcx> Relate<'tcx> for ty::TraitRef<'tcx> {
             Err(TypeError::Traits(expected_found(relation, a.def_id, b.def_id)))
         } else {
             // REMOVEME: This is related to the issue being resolved.
-            pr!(relation.tcx(), "Relating {a:?} {b:?}");
+            pr!(relation.tcx(), "[begin] TraitRef::relate({a:?}, {b:?})");
             let substs = relate_substs(
                 relation,
                 trait_variance(relation.tcx(), a.def_id),
                 a.substs,
                 b.substs,
             )?;
-            pr!(relation.tcx(), "=> substs = {substs:?}");
+            pr!(relation.tcx(), "[end] TraitRef::relate({a:?}, {b:?}) => {substs:?}");
             Ok(ty::TraitRef { def_id: a.def_id, substs })
         }
     }
@@ -391,14 +419,14 @@ impl<'tcx> Relate<'tcx> for ty::ExistentialTraitRef<'tcx> {
         if a.def_id != b.def_id {
             Err(TypeError::Traits(expected_found(relation, a.def_id, b.def_id)))
         } else {
-            pr!(relation.tcx(), "Relating {a:?} {b:?}");
+            pr!(relation.tcx(), "[begin] ExistentialTraitRef::relate({a:?}, {b:?})");
             let substs = relate_substs(
                 relation,
                 trait_variance(relation.tcx(), a.def_id),
                 a.substs,
                 b.substs,
             )?;
-            pr!(relation.tcx(), "=> substs = {substs:?}");
+            pr!(relation.tcx(), "[end] ExistentialTraitRef::relate({a:?}, {b:?}) => {substs:?}");
             Ok(ty::ExistentialTraitRef { def_id: a.def_id, substs })
         }
     }
@@ -501,6 +529,10 @@ pub fn super_relate_tys<'tcx, R: TypeRelation<'tcx>>(
         (&ty::Foreign(a_id), &ty::Foreign(b_id)) if a_id == b_id => Ok(tcx.mk_foreign(a_id)),
 
         (&ty::Dynamic(a_obj, a_region), &ty::Dynamic(b_obj, b_region)) => {
+            pr!(
+                relation.tcx(),
+                "[begin] relating dynamics -- regions ({a_region:?}, {b_region:?})"
+            );
             let region_bound = relation.with_cause(Cause::ExistentialRegionBound, |relation| {
                 relation.relate_with_variance(
                     ty::Contravariant,
@@ -509,7 +541,14 @@ pub fn super_relate_tys<'tcx, R: TypeRelation<'tcx>>(
                     b_region,
                 )
             })?;
-            Ok(tcx.mk_dynamic(relation.relate(a_obj, b_obj)?, region_bound))
+            pr!(
+                relation.tcx(),
+                "[end] relating dynamics -- regions ({a_region:?}, {b_region:?}) => {region_bound:?}"
+            );
+            pr!(relation.tcx(), "[begin] relating dynamics -- objs ({a_obj:?}, {b_obj:?})");
+            let ret = relation.relate(a_obj, b_obj)?;
+            pr!(relation.tcx(), "[end] relating dynamics ({a_obj:?}, {b_obj:?}) => {ret:?})");
+            Ok(tcx.mk_dynamic(ret, region_bound))
         }
 
         (&ty::Generator(a_id, a_substs, movability), &ty::Generator(b_id, b_substs, _))
@@ -618,14 +657,14 @@ pub fn super_relate_tys<'tcx, R: TypeRelation<'tcx>>(
         (&ty::Opaque(a_def_id, a_substs), &ty::Opaque(b_def_id, b_substs))
             if a_def_id == b_def_id =>
         {
-            pr!(relation.tcx(),"Relating {a:?} {b:?}");
+            pr!(relation.tcx(), "[begin] <opaques>::relate({a:?}, {b:?})");
             let substs = relate_substs(
                 relation,
                 trait_variance(relation.tcx(), a_def_id),
                 a_substs,
                 b_substs,
             )?;
-            pr!(relation.tcx(),"=> substs = {substs:?}");
+            pr!(relation.tcx(), "[end] <opaques>::relate({a:?}, {b:?}) => {substs:?}");
             Ok(tcx.mk_opaque(a_def_id, substs))
         }
 
@@ -778,7 +817,10 @@ impl<'tcx> Relate<'tcx> for SubstsRef<'tcx> {
         a: SubstsRef<'tcx>,
         b: SubstsRef<'tcx>,
     ) -> RelateResult<'tcx, SubstsRef<'tcx>> {
-        relate_substs(relation, ty::Invariant, a, b)
+        pr!(relation.tcx(), "[begin] SubstsRef::relate({a:?}, {b:?})");
+        let ret = relate_substs(relation, ty::Invariant, a, b);
+        pr!(relation.tcx(), "[end] SubstsRef::relate({a:?}, {b:?}) => ret");
+        ret
     }
 }
 
