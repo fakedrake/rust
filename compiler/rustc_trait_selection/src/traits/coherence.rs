@@ -307,7 +307,13 @@ fn negative_impl<'cx, 'tcx>(
             tcx.impl_subject(impl1_def_id),
         ) {
             Ok(s) => s,
-            Err(err) => bug!("failed to fully normalize {:?}: {:?}", impl1_def_id, err),
+            Err(err) => {
+                tcx.sess.delay_span_bug(
+                    tcx.def_span(impl1_def_id),
+                    format!("failed to fully normalize {:?}: {:?}", impl1_def_id, err),
+                );
+                return false;
+            }
         };
 
         // Attempt to prove that impl2 applies, given all of the above.
@@ -336,10 +342,8 @@ fn equate<'cx, 'tcx>(
     };
 
     let selcx = &mut SelectionContext::new(&infcx);
-    let opt_failing_obligation = obligations
-        .into_iter()
-        .chain(more_obligations)
-        .find(|o| negative_impl_exists(selcx, impl_env, o));
+    let opt_failing_obligation =
+        obligations.into_iter().chain(more_obligations).find(|o| negative_impl_exists(selcx, o));
 
     if let Some(failing_obligation) = opt_failing_obligation {
         debug!("overlap: obligation unsatisfiable {:?}", failing_obligation);
@@ -353,18 +357,15 @@ fn equate<'cx, 'tcx>(
 #[instrument(level = "debug", skip(selcx))]
 fn negative_impl_exists<'cx, 'tcx>(
     selcx: &SelectionContext<'cx, 'tcx>,
-    param_env: ty::ParamEnv<'tcx>,
     o: &PredicateObligation<'tcx>,
 ) -> bool {
-    let infcx = &selcx.infcx().fork();
-
-    if resolve_negative_obligation(infcx, param_env, o) {
+    if resolve_negative_obligation(selcx.infcx().fork(), o) {
         return true;
     }
 
     // Try to prove a negative obligation exists for super predicates
-    for o in util::elaborate_predicates(infcx.tcx, iter::once(o.predicate)) {
-        if resolve_negative_obligation(infcx, param_env, &o) {
+    for o in util::elaborate_predicates(selcx.tcx(), iter::once(o.predicate)) {
+        if resolve_negative_obligation(selcx.infcx().fork(), &o) {
             return true;
         }
     }
@@ -374,8 +375,7 @@ fn negative_impl_exists<'cx, 'tcx>(
 
 #[instrument(level = "debug", skip(infcx))]
 fn resolve_negative_obligation<'cx, 'tcx>(
-    infcx: &InferCtxt<'cx, 'tcx>,
-    param_env: ty::ParamEnv<'tcx>,
+    infcx: InferCtxt<'cx, 'tcx>,
     o: &PredicateObligation<'tcx>,
 ) -> bool {
     let tcx = infcx.tcx;
@@ -384,7 +384,8 @@ fn resolve_negative_obligation<'cx, 'tcx>(
         return false;
     };
 
-    let errors = super::fully_solve_obligation(infcx, o);
+    let param_env = o.param_env;
+    let errors = super::fully_solve_obligation(&infcx, o);
     if !errors.is_empty() {
         return false;
     }
@@ -398,12 +399,12 @@ fn resolve_negative_obligation<'cx, 'tcx>(
 pub fn trait_ref_is_knowable<'tcx>(
     tcx: TyCtxt<'tcx>,
     trait_ref: ty::TraitRef<'tcx>,
-) -> Option<Conflict> {
+) -> Result<(), Conflict> {
     debug!("trait_ref_is_knowable(trait_ref={:?})", trait_ref);
     if orphan_check_trait_ref(tcx, trait_ref, InCrate::Remote).is_ok() {
         // A downstream or cousin crate is allowed to implement some
         // substitution of this trait-ref.
-        return Some(Conflict::Downstream);
+        return Err(Conflict::Downstream);
     }
 
     if trait_ref_is_local_or_fundamental(tcx, trait_ref) {
@@ -412,7 +413,7 @@ pub fn trait_ref_is_knowable<'tcx>(
         // allowed to implement a substitution of this trait ref, which
         // means impls could only come from dependencies of this crate,
         // which we already know about.
-        return None;
+        return Ok(());
     }
 
     // This is a remote non-fundamental trait, so if another crate
@@ -425,10 +426,10 @@ pub fn trait_ref_is_knowable<'tcx>(
     // we are an owner.
     if orphan_check_trait_ref(tcx, trait_ref, InCrate::Local).is_ok() {
         debug!("trait_ref_is_knowable: orphan check passed");
-        None
+        Ok(())
     } else {
         debug!("trait_ref_is_knowable: nonlocal, nonfundamental, unowned");
-        Some(Conflict::Upstream)
+        Err(Conflict::Upstream)
     }
 }
 

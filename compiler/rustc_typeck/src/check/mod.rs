@@ -87,7 +87,6 @@ mod op;
 mod pat;
 mod place_op;
 mod region;
-pub mod regionck;
 pub mod rvalue_scopes;
 mod upvar;
 pub mod wfcheck;
@@ -466,11 +465,6 @@ fn typeck_with_fallback<'tcx>(
         // precise information on types to be captured.
         fcx.resolve_rvalue_scopes(def_id.to_def_id());
         fcx.resolve_generator_interiors(def_id.to_def_id());
-
-        for (ty, span, code) in fcx.deferred_sized_obligations.borrow_mut().drain(..) {
-            let ty = fcx.normalize_ty(span, ty);
-            fcx.require_type_is_sized(ty, span, code);
-        }
 
         fcx.select_all_obligations_or_error();
 

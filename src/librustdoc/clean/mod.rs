@@ -44,10 +44,6 @@ use utils::*;
 pub(crate) use self::types::*;
 pub(crate) use self::utils::{get_auto_trait_and_blanket_impls, krate, register_res};
 
-pub(crate) trait Clean<'tcx, T> {
-    fn clean(&self, cx: &mut DocContext<'tcx>) -> T;
-}
-
 pub(crate) fn clean_doc_module<'tcx>(doc: &DocModule<'tcx>, cx: &mut DocContext<'tcx>) -> Item {
     let mut items: Vec<Item> = vec![];
     let mut inserted = FxHashSet::default();
@@ -414,12 +410,12 @@ fn clean_projection<'tcx>(
         self_type.def_id(&cx.cache)
     };
     let should_show_cast = compute_should_show_cast(self_def_id, &trait_, &self_type);
-    Type::QPath {
-        assoc: Box::new(projection_to_path_segment(ty, cx)),
+    Type::QPath(Box::new(QPathData {
+        assoc: projection_to_path_segment(ty, cx),
         should_show_cast,
-        self_type: Box::new(self_type),
+        self_type,
         trait_,
-    }
+    }))
 }
 
 fn compute_should_show_cast(self_def_id: Option<DefId>, trait_: &Path, self_type: &Type) -> bool {
@@ -1186,7 +1182,7 @@ pub(crate) fn clean_middle_assoc_item<'tcx>(
                     .where_predicates
                     .drain_filter(|pred| match *pred {
                         WherePredicate::BoundPredicate {
-                            ty: QPath { ref assoc, ref self_type, ref trait_, .. },
+                            ty: QPath(box QPathData { ref assoc, ref self_type, ref trait_, .. }),
                             ..
                         } => {
                             if assoc.name != my_name {
@@ -1195,7 +1191,7 @@ pub(crate) fn clean_middle_assoc_item<'tcx>(
                             if trait_.def_id() != assoc_item.container_id(tcx) {
                                 return false;
                             }
-                            match **self_type {
+                            match *self_type {
                                 Generic(ref s) if *s == kw::SelfUpper => {}
                                 _ => return false,
                             }
@@ -1328,15 +1324,12 @@ fn clean_qpath<'tcx>(hir_ty: &hir::Ty<'tcx>, cx: &mut DocContext<'tcx>) -> Type 
             let self_def_id = DefId::local(qself.hir_id.owner.local_def_index);
             let self_type = clean_ty(qself, cx);
             let should_show_cast = compute_should_show_cast(Some(self_def_id), &trait_, &self_type);
-            Type::QPath {
-                assoc: Box::new(clean_path_segment(
-                    p.segments.last().expect("segments were empty"),
-                    cx,
-                )),
+            Type::QPath(Box::new(QPathData {
+                assoc: clean_path_segment(p.segments.last().expect("segments were empty"), cx),
                 should_show_cast,
-                self_type: Box::new(self_type),
+                self_type,
                 trait_,
-            }
+            }))
         }
         hir::QPath::TypeRelative(qself, segment) => {
             let ty = hir_ty_to_ty(cx.tcx, hir_ty);
@@ -1351,12 +1344,12 @@ fn clean_qpath<'tcx>(hir_ty: &hir::Ty<'tcx>, cx: &mut DocContext<'tcx>) -> Type 
             let self_def_id = res.opt_def_id();
             let self_type = clean_ty(qself, cx);
             let should_show_cast = compute_should_show_cast(self_def_id, &trait_, &self_type);
-            Type::QPath {
-                assoc: Box::new(clean_path_segment(segment, cx)),
+            Type::QPath(Box::new(QPathData {
+                assoc: clean_path_segment(segment, cx),
                 should_show_cast,
-                self_type: Box::new(self_type),
+                self_type,
                 trait_,
-            }
+            }))
         }
         hir::QPath::LangItem(..) => bug!("clean: requiring documentation of lang item"),
     }
@@ -1925,7 +1918,7 @@ fn clean_maybe_renamed_item<'tcx>(
                 }))
             }
             ItemKind::Enum(ref def, generics) => EnumItem(Enum {
-                variants: def.variants.iter().map(|v| v.clean(cx)).collect(),
+                variants: def.variants.iter().map(|v| clean_variant(v, cx)).collect(),
                 generics: clean_generics(generics, cx),
             }),
             ItemKind::TraitAlias(generics, bounds) => TraitAliasItem(TraitAlias {
@@ -1958,12 +1951,12 @@ fn clean_maybe_renamed_item<'tcx>(
                     .map(|ti| clean_trait_item(cx.tcx.hir().trait_item(ti.id), cx))
                     .collect();
 
-                TraitItem(Trait {
+                TraitItem(Box::new(Trait {
                     def_id,
                     items,
                     generics: clean_generics(generics, cx),
                     bounds: bounds.iter().filter_map(|x| clean_generic_bound(x, cx)).collect(),
-                })
+                }))
             }
             ItemKind::ExternCrate(orig_name) => {
                 return clean_extern_crate(item, name, orig_name, cx);
@@ -1978,14 +1971,12 @@ fn clean_maybe_renamed_item<'tcx>(
     })
 }
 
-impl<'tcx> Clean<'tcx, Item> for hir::Variant<'tcx> {
-    fn clean(&self, cx: &mut DocContext<'tcx>) -> Item {
-        let kind = VariantItem(clean_variant_data(&self.data, cx));
-        let what_rustc_thinks =
-            Item::from_hir_id_and_parts(self.id, Some(self.ident.name), kind, cx);
-        // don't show `pub` for variants, which are always public
-        Item { visibility: Inherited, ..what_rustc_thinks }
-    }
+fn clean_variant<'tcx>(variant: &hir::Variant<'tcx>, cx: &mut DocContext<'tcx>) -> Item {
+    let kind = VariantItem(clean_variant_data(&variant.data, cx));
+    let what_rustc_thinks =
+        Item::from_hir_id_and_parts(variant.id, Some(variant.ident.name), kind, cx);
+    // don't show `pub` for variants, which are always public
+    Item { visibility: Inherited, ..what_rustc_thinks }
 }
 
 fn clean_impl<'tcx>(

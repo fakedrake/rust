@@ -107,7 +107,7 @@ impl<'a, 'tcx> InferCtxt<'a, 'tcx> {
         match origin {
             infer::Subtype(box trace) => {
                 let terr = TypeError::RegionsDoesNotOutlive(sup, sub);
-                let mut err = self.report_and_explain_type_error(trace, &terr);
+                let mut err = self.report_and_explain_type_error(trace, terr);
                 match (*sub, *sup) {
                     (ty::RePlaceholder(_), ty::RePlaceholder(_)) => {}
                     (ty::RePlaceholder(_), _) => {
@@ -390,10 +390,12 @@ impl<'a, 'tcx> InferCtxt<'a, 'tcx> {
                 if matches!(
                     &trace.cause.code().peel_derives(),
                     ObligationCauseCode::BindingObligation(..)
+                        | ObligationCauseCode::ExprBindingObligation(..)
                 ) =>
             {
                 // Hack to get around the borrow checker because trace.cause has an `Rc`.
-                if let ObligationCauseCode::BindingObligation(_, span) =
+                if let ObligationCauseCode::BindingObligation(_, span)
+                | ObligationCauseCode::ExprBindingObligation(_, span, ..) =
                     &trace.cause.code().peel_derives()
                 {
                     let span = *span;
@@ -406,7 +408,7 @@ impl<'a, 'tcx> InferCtxt<'a, 'tcx> {
             }
             infer::Subtype(box trace) => {
                 let terr = TypeError::RegionsPlaceholderMismatch;
-                return self.report_and_explain_type_error(trace, &terr);
+                return self.report_and_explain_type_error(trace, terr);
             }
             _ => return self.report_concrete_failure(placeholder_origin, sub, sup),
         }

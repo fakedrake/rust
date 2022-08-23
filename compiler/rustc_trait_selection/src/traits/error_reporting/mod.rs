@@ -22,6 +22,7 @@ use rustc_hir::intravisit::Visitor;
 use rustc_hir::GenericParam;
 use rustc_hir::Item;
 use rustc_hir::Node;
+use rustc_infer::infer::TypeTrace;
 use rustc_infer::traits::TraitEngine;
 use rustc_middle::traits::select::OverflowError;
 use rustc_middle::ty::abstract_const::NotConstEvaluatable;
@@ -859,8 +860,7 @@ impl<'a, 'tcx> InferCtxtExt<'tcx> for InferCtxt<'a, 'tcx> {
                             }
                         }
 
-                        err.emit();
-                        return;
+                        err
                     }
 
                     ty::PredicateKind::WellFormed(ty) => {
@@ -941,9 +941,14 @@ impl<'a, 'tcx> InferCtxtExt<'tcx> for InferCtxt<'a, 'tcx> {
 
                 self.reported_closure_mismatch.borrow_mut().insert((span, found_span));
 
+                let mut not_tupled = false;
+
                 let found = match found_trait_ref.skip_binder().substs.type_at(1).kind() {
                     ty::Tuple(ref tys) => vec![ArgKind::empty(); tys.len()],
-                    _ => vec![ArgKind::empty()],
+                    _ => {
+                        not_tupled = true;
+                        vec![ArgKind::empty()]
+                    }
                 };
 
                 let expected_ty = expected_trait_ref.skip_binder().substs.type_at(1);
@@ -951,10 +956,28 @@ impl<'a, 'tcx> InferCtxtExt<'tcx> for InferCtxt<'a, 'tcx> {
                     ty::Tuple(ref tys) => {
                         tys.iter().map(|t| ArgKind::from_expected_ty(t, Some(span))).collect()
                     }
-                    _ => vec![ArgKind::Arg("_".to_owned(), expected_ty.to_string())],
+                    _ => {
+                        not_tupled = true;
+                        vec![ArgKind::Arg("_".to_owned(), expected_ty.to_string())]
+                    }
                 };
 
-                if found.len() == expected.len() {
+                // If this is a `Fn` family trait and either the expected or found
+                // is not tupled, then fall back to just a regular mismatch error.
+                // This shouldn't be common unless manually implementing one of the
+                // traits manually, but don't make it more confusing when it does
+                // happen.
+                if Some(expected_trait_ref.def_id()) != tcx.lang_items().gen_trait() && not_tupled {
+                    self.report_and_explain_type_error(
+                        TypeTrace::poly_trait_refs(
+                            &obligation.cause,
+                            true,
+                            expected_trait_ref,
+                            found_trait_ref,
+                        ),
+                        ty::error::TypeError::Mismatch,
+                    )
+                } else if found.len() == expected.len() {
                     self.report_closure_arg_mismatch(
                         span,
                         found_span,
@@ -1507,8 +1530,7 @@ impl<'a, 'tcx> InferCtxtPrivExt<'a, 'tcx> for InferCtxt<'a, 'tcx> {
         }
 
         self.probe(|_| {
-            let err_buf;
-            let mut err = &error.err;
+            let mut err = error.err;
             let mut values = None;
 
             // try to find the mismatched types to report the error with.
@@ -1541,17 +1563,18 @@ impl<'a, 'tcx> InferCtxtPrivExt<'a, 'tcx> for InferCtxt<'a, 'tcx> {
                     obligation.cause.code().peel_derives(),
                     ObligationCauseCode::ItemObligation(_)
                         | ObligationCauseCode::BindingObligation(_, _)
+                        | ObligationCauseCode::ExprItemObligation(..)
+                        | ObligationCauseCode::ExprBindingObligation(..)
                         | ObligationCauseCode::ObjectCastObligation(..)
                         | ObligationCauseCode::OpaqueType
                 );
-                if let Err(error) = self.at(&obligation.cause, obligation.param_env).eq_exp(
+                if let Err(new_err) = self.at(&obligation.cause, obligation.param_env).eq_exp(
                     is_normalized_ty_expected,
                     normalized_ty,
                     data.term,
                 ) {
                     values = Some((data, is_normalized_ty_expected, normalized_ty, data.term));
-                    err_buf = error;
-                    err = &err_buf;
+                    err = new_err;
                 }
             }
 
@@ -2069,13 +2092,11 @@ impl<'a, 'tcx> InferCtxtPrivExt<'a, 'tcx> for InferCtxt<'a, 'tcx> {
                     }
                 }
 
-                if let ObligationCauseCode::ItemObligation(def_id) = *obligation.cause.code() {
+                if let ObligationCauseCode::ItemObligation(def_id) | ObligationCauseCode::ExprItemObligation(def_id, ..) = *obligation.cause.code() {
                     self.suggest_fully_qualified_path(&mut err, def_id, span, trait_ref.def_id());
-                } else if let (
-                    Ok(ref snippet),
-                    &ObligationCauseCode::BindingObligation(def_id, _),
-                ) =
-                    (self.tcx.sess.source_map().span_to_snippet(span), obligation.cause.code())
+                } else if let Ok(snippet) = &self.tcx.sess.source_map().span_to_snippet(span)
+                    && let ObligationCauseCode::BindingObligation(def_id, _) | ObligationCauseCode::ExprBindingObligation(def_id, ..)
+                        = *obligation.cause.code()
                 {
                     let generics = self.tcx.generics_of(def_id);
                     if generics.params.iter().any(|p| p.name != kw::SelfUpper)
@@ -2498,15 +2519,10 @@ impl<'a, 'tcx> InferCtxtPrivExt<'a, 'tcx> for InferCtxt<'a, 'tcx> {
         err: &mut Diagnostic,
         obligation: &PredicateObligation<'tcx>,
     ) {
-        let (
-            ty::PredicateKind::Trait(pred),
-            &ObligationCauseCode::BindingObligation(item_def_id, span),
-        ) = (
-            obligation.predicate.kind().skip_binder(),
-            obligation.cause.code().peel_derives(),
-        )  else {
-            return;
-        };
+        let ty::PredicateKind::Trait(pred) = obligation.predicate.kind().skip_binder() else { return; };
+        let (ObligationCauseCode::BindingObligation(item_def_id, span)
+        | ObligationCauseCode::ExprBindingObligation(item_def_id, span, ..))
+            = *obligation.cause.code().peel_derives() else { return; };
         debug!(?pred, ?item_def_id, ?span);
 
         let (Some(node), true) = (

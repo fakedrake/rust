@@ -248,7 +248,7 @@ fn from_clean_item(item: clean::Item, tcx: TyCtxt<'_>) -> ItemEnum {
         VariantItem(v) => ItemEnum::Variant(v.into_tcx(tcx)),
         FunctionItem(f) => ItemEnum::Function(from_function(f, header.unwrap(), tcx)),
         ForeignFunctionItem(f) => ItemEnum::Function(from_function(f, header.unwrap(), tcx)),
-        TraitItem(t) => ItemEnum::Trait(t.into_tcx(tcx)),
+        TraitItem(t) => ItemEnum::Trait((*t).into_tcx(tcx)),
         TraitAliasItem(t) => ItemEnum::TraitAlias(t.into_tcx(tcx)),
         MethodItem(m, _) => ItemEnum::Method(from_function_method(m, true, header.unwrap(), tcx)),
         TyMethodItem(m) => ItemEnum::Method(from_function_method(m, false, header.unwrap(), tcx)),
@@ -480,10 +480,10 @@ impl FromWithTcx<clean::Type> for Type {
                 mutable: mutability == ast::Mutability::Mut,
                 type_: Box::new((*type_).into_tcx(tcx)),
             },
-            QPath { assoc, self_type, trait_, .. } => Type::QualifiedPath {
+            QPath(box clean::QPathData { assoc, self_type, trait_, .. }) => Type::QualifiedPath {
                 name: assoc.name.to_string(),
                 args: Box::new(assoc.args.clone().into_tcx(tcx)),
-                self_type: Box::new((*self_type).into_tcx(tcx)),
+                self_type: Box::new(self_type.into_tcx(tcx)),
                 trait_: trait_.into_tcx(tcx),
             },
         }
@@ -662,12 +662,10 @@ impl FromWithTcx<clean::Variant> for Variant {
             Tuple(fields) => Variant::Tuple(
                 fields
                     .into_iter()
-                    .map(|f| {
-                        if let clean::StructFieldItem(ty) = *f.kind {
-                            ty.into_tcx(tcx)
-                        } else {
-                            unreachable!()
-                        }
+                    .filter_map(|f| match *f.kind {
+                        clean::StructFieldItem(ty) => Some(ty.into_tcx(tcx)),
+                        clean::StrippedItem(_) => None,
+                        _ => unreachable!(),
                     })
                     .collect(),
             ),
