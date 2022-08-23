@@ -524,10 +524,6 @@ where
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
-        if self.tcx().features().contravariant_traits {
-            eprintln!("[begin]TypeRelating::relate_with_variance({variance:?}, {a:?}, {b:?})");
-        }
-
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
         self.ambient_variance_info = self.ambient_variance_info.xform(info);
@@ -535,11 +531,6 @@ where
         debug!(?self.ambient_variance);
 
         let r = self.relate(a, b)?;
-        if self.tcx().features().contravariant_traits {
-            eprintln!(
-                "[end]TypeRelating::relate_with_variance({variance:?}, {a:?}, {b:?}) => {r:?}"
-            );
-        }
         self.ambient_variance = old_ambient_variance;
 
         debug!(?r);
@@ -645,26 +636,12 @@ where
 
         if self.ambient_covariance() {
             // Covariance: a <= b. Hence, `b: a`.
-            if self.tcx().features().contravariant_traits {
-                eprintln!(
-                    "self.push_outlives({v_b:?}, {v_a:?}, Covar) [{:?}]",
-                    self.ambient_variance
-                );
-            }
-
             self.push_outlives(v_b, v_a, self.ambient_variance_info);
         }
 
         if self.ambient_contravariance() {
-            if self.tcx().features().contravariant_traits {
-                eprintln!("self.push_outlives({v_a:?}, {v_b:?}, Contravar)");
-            }
             // Contravariant: b <= a. Hence, `a: b`.
             self.push_outlives(v_a, v_b, self.ambient_variance_info);
-        }
-
-        if self.tcx().features().contravariant_traits {
-            eprintln!("self.regions({a:?}, {b:?}) => {a:?}");
         }
 
         Ok(a)
@@ -929,10 +906,6 @@ where
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
-        if self.tcx().features().contravariant_traits {
-            eprintln!("TypeGeneralizer::relate_with_variance({variance:?}, {a:?}, {b:?})");
-        }
-
         debug!(
             "TypeGeneralizer::relate_with_variance(variance={:?}, a={:?}, b={:?})",
             variance, a, b

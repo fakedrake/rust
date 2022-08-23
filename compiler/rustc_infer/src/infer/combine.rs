@@ -588,9 +588,6 @@ impl<'tcx> TypeRelation<'tcx> for Generalizer<'_, 'tcx> {
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
-        if self.tcx().features().contravariant_traits {
-            eprintln!("Generalizer::relate_with_variance({variance:?}, {a:?}, {b:?})");
-        }
         let old_ambient_variance = self.ambient_variance;
         self.ambient_variance = self.ambient_variance.xform(variance);
 

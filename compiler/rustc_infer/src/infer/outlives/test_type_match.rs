@@ -153,10 +153,6 @@ impl<'tcx> TypeRelation<'tcx> for Match<'tcx> {
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
-        if self.tcx.features().contravariant_traits {
-            eprintln!("Match::relate_with_variance({var:?}, {a:?}, {b:?})");
-        }
-
         self.relate(a, b)
     }
 

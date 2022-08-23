@@ -67,10 +67,6 @@ impl<'tcx> TypeRelation<'tcx> for Sub<'_, '_, 'tcx> {
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
-        if self.tcx().features().contravariant_traits {
-            eprintln!("Sub::relate_with_variance({variance:?}, {a:?}, {b:?})");
-        }
-
         match variance {
             ty::Invariant => self.fields.equate(self.a_is_expected).relate(a, b),
             ty::Covariant => self.relate(a, b),

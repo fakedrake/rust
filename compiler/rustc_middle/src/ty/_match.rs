@@ -45,15 +45,11 @@ impl<'tcx> TypeRelation<'tcx> for Match<'tcx> {
 
     fn relate_with_variance<T: Relate<'tcx>>(
         &mut self,
-        var: ty::Variance,
+        _var: ty::Variance,
         _: ty::VarianceDiagInfo<'tcx>,
         a: T,
         b: T,
     ) -> RelateResult<'tcx, T> {
-        if self.tcx.features().contravariant_traits {
-            eprintln!("Lub::relate_with_variance({var:?}, {a:?}, {b:?})");
-        }
-
         self.relate(a, b)
     }
 
