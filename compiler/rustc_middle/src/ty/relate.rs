@@ -317,11 +317,7 @@ impl<'tcx> Relate<'tcx> for ty::ExistentialProjection<'tcx> {
             // projection so no need to check the a.item_def_id
             // itself. Only closure traits we can trust to be
             // covariant to the output type.
-            let term_var = if is_fn_trait(tcx, trait_id) {
-                ty::Covariant
-            } else {
-                ty::Invariant
-            };
+            let term_var = if is_fn_trait(tcx, trait_id) { ty::Covariant } else { ty::Invariant };
 
             let term = relation.relate_with_variance(
                 term_var,
@@ -329,17 +325,9 @@ impl<'tcx> Relate<'tcx> for ty::ExistentialProjection<'tcx> {
                 a.term,
                 b.term,
             )?;
-            let substs = relate_substs(
-                relation,
-                trait_variance(tcx, trait_id),
-                a.substs,
-                b.substs,
-            )?;
-            Ok(ty::ExistentialProjection {
-                item_def_id: a.item_def_id,
-                substs,
-                term,
-            })
+            let substs =
+                relate_substs(relation, trait_variance(tcx, trait_id), a.substs, b.substs)?;
+            Ok(ty::ExistentialProjection { item_def_id: a.item_def_id, substs, term })
         }
     }
 }
@@ -351,11 +339,7 @@ fn undone() -> ty::Variance {
 
 #[inline]
 fn trait_variance<'tcx>(tcx: TyCtxt<'tcx>, did: DefId) -> ty::Variance {
-    if is_fn_trait(tcx, did) {
-        ty::Contravariant
-    } else {
-        ty::Invariant
-    }
+    if is_fn_trait(tcx, did) { ty::Contravariant } else { ty::Invariant }
 }
 
 /// True if `did` is [`Fn`]/[`FnMut`]/[`FnOnce`].

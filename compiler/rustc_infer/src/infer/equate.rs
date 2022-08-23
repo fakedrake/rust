@@ -58,7 +58,7 @@ impl<'tcx> TypeRelation<'tcx> for Equate<'_, '_, 'tcx> {
 
     fn relate_with_variance<T: Relate<'tcx>>(
         &mut self,
-        var: ty::Variance,
+        _var: ty::Variance,
         _info: ty::VarianceDiagInfo<'tcx>,
         a: T,
         b: T,

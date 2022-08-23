@@ -408,7 +408,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, 'tcx> {
             }
         };
 
-        let mut report = |note,desc| {
+        let mut report = |note, desc| {
             diag.note(&format!("requirement occurs because of {desc}",));
             diag.note(&note);
             diag.help("see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance");
@@ -474,8 +474,7 @@ impl<'a, 'tcx> MirBorrowckCtxt<'a, 'tcx> {
                 };
             }
         }
-            self.buffer_error(diag);
-
+        self.buffer_error(diag);
     }
 
     /// Report a specialized error when `FnMut` closures return a reference to a captured variable.
